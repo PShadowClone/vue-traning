@@ -1,0 +1,527 @@
+<?php
+
+namespace App\Http\Controllers\frontEnd;
+
+class MainController extends PublicBaseController {
+    
+    function __construct(){
+        parent::__construct();
+    }
+    
+    public function index(){
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        $index = ' active';
+        $videos = \App\Video::select('id','vid_title', 'vid_img')->orderBy('id', 'DESC')->take(5)->get();
+        $stds = \App\Student::select('id')->count();
+        $less = \App\Lesson::select('id')->count();
+        $medias = \App\Media::select('id')->count();
+        $vids = \App\Video::select('id')->count();
+        $mlts = $medias + $vids;
+        $trns = \App\Training::select('id')->count();
+        $statistics = array('stds'=>$stds, 'less'=>$less, 'mlts'=>$mlts, 'trns'=>$trns);
+        $levels = \App\Level::select('lvl_num', 'lvl_name')->get();
+        $top_students = [];
+        foreach ($levels as $lvl){
+//             $top_three = \App\Student::select('id', 'std_fname', 'std_lname', 'std_avatar', 'std_gpa')->where('std_level', $lvl->lvl_num)->orderBy('std_gpa', 'DESC')->take(3)->get();
+            $top_three = \DB::table('results')->leftJoin('students', 'results.r_std', '=', 'students.id')->where('students.std_level', $lvl->lvl_num)->groupBy('results.r_std', 'students.id', 'students.std_fname', 'students.std_lname', 'students.std_avatar', 'students.std_gpa')->select('students.id', 'students.std_fname', 'students.std_lname', 'students.std_avatar', 'students.std_gpa')->orderBy(\DB::Raw('(SUM(results.r_count) * students.std_gpa)'), 'ASC')->limit(3)->get();
+            $top_students [] = [
+                'level_num' => $lvl->lvl_num,
+                'level' => $lvl->lvl_name,
+                'top_in_level'=>$top_three
+            ];
+        }
+        return view('public.index', compact('index', 'gd', 'user', 'videos', 'statistics', 'top_students'));
+    }
+    
+    public function viewPage($id){
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        $page = \App\Page::find($id);
+        return view('public.page', compact('gd', 'page', 'user'));
+    }
+    
+    public function login(){
+        $gd = $this->GeneralData();
+        return view('public.login', compact('gd'));
+    }
+    
+    public function register(){
+        $lvls = \App\Level::all();
+        $counties = \App\Country::all();
+        $gd = $this->GeneralData();
+        return view('public.register', compact('gd', 'lvls', 'counties'));
+    }
+    public function default_students(){
+      $level = \App\Level::where('lvl_num', 1)->first();
+      $levels = \App\Level::all();
+      $gd = $this->GeneralData();
+      $user = $this->LoggedUser();
+      $students = \DB::table('results')->leftJoin('students', 'results.r_std', '=', 'students.id')->where('students.std_level', $level->lvl_num)->groupBy('results.r_std', 'students.id', 'students.std_fname', 'students.std_lname', 'students.std_avatar', 'students.std_gpa')->select('students.id', 'students.std_fname', 'students.std_lname', 'students.std_avatar', 'students.std_gpa')->orderBy(\DB::Raw('(SUM(results.r_count) * students.std_gpa)'), 'ASC')->limit(12)->get();
+      return view('public.students', compact('gd', 'user', 'level', 'levels', 'students'));
+    }
+    public function students($lvl_id){
+      if(!is_numeric($lvl_id)) abort(404);
+      $level = \App\Level::where('lvl_num', $lvl_id)->first(); if($level == null) abort(404);
+      $levels = \App\Level::all();
+      $gd = $this->GeneralData();
+      $user = $this->LoggedUser();
+      $students = \DB::table('results')->leftJoin('students', 'results.r_std', '=', 'students.id')->where('students.std_level', $level->lvl_num)->groupBy('results.r_std', 'students.id', 'students.std_fname', 'students.std_lname', 'students.std_avatar', 'students.std_gpa')->select('students.id', 'students.std_fname', 'students.std_lname', 'students.std_avatar', 'students.std_gpa')->orderBy(\DB::Raw('(SUM(results.r_count) * students.std_gpa)'), 'ASC')->limit(12)->get();
+      return view('public.students', compact('gd', 'user', 'level', 'levels', 'students'));
+    }
+
+    public function videos(){
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        $videos = \App\Video::select('id', 'vid_title', 'vid_img')->orderBy('id', 'DESC')->paginate(10);
+        return view('public.videos', compact('gd', 'user', 'videos'));
+    }
+
+    public function single_video($v_id){
+        if(!is_numeric($v_id)) abort(404);
+        $video = \App\Video::find($v_id); if($video == null) abort(404);
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        return view('public.single_video', compact('gd', 'user', 'video'));
+    }
+    
+    public function contact(){
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        $map = $this->MapDim();
+        return view('public.contact', compact('gd', 'user', 'map'));
+    }
+
+    public function profile(){
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        $tperl = \App\Setting::where('set_id', 'train_per_lesson')->first()->set_data;
+        $subs = \App\Subject::all();
+        $result =[];
+        foreach ($subs as $sub){
+            $chaps = \App\Chapter::where('ch_level', $user['lvl_id'])->where('ch_subject', $sub->id)->pluck('id')->toArray();
+            $lessons = \App\Lesson::whereIn('les_chapter', $chaps)->pluck('id')->toArray();
+            $tcount = count($lessons);
+            $r_sum = \App\Result::where('r_std', $user['id'])->whereIn('r_less', $lessons)->sum('r_count');
+            $r_tsum = \App\Result::where('r_std', $user['id'])->whereIn('r_less', $lessons)->sum('r_tcount');
+            $sgpa = ($r_sum > 0) ? ($r_tsum/$r_sum)*100 : 0;
+            $gpa = round($sgpa, 2);
+            $slvl = ($tcount > 0) ? ($r_sum/$tcount)*100 : 0;
+            $result [] = [
+                'sub_id' => $sub->id,
+                'sub_name' => $sub->sub_name,
+                'sub_gpa' => $gpa,
+                'sub_lvl' => $slvl
+            ];
+        }
+
+        $level = \App\Level::where('lvl_num', $user['lvl_id'])->first();
+        $r_sum = \App\Result::where('r_std', $user['id'])->sum('r_count');
+        $tcount = $level->lvl_numofLess * $tperl;
+        $blevel = ($tcount > 0) ? ($r_sum/$tcount)*100 : 0;
+        $level = round($blevel, 2);
+        return view('public.profile', compact('gd', 'user', 'level', 'result'));
+    }
+
+    public function edit_profile(){
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        $lvls = \App\Level::all();
+        $student = \App\Student::find($user['id']);
+        $counties = \App\Country::all();
+        $tperl = \App\Setting::where('set_id', 'train_per_lesson')->first()->set_data;
+        $level = \App\Level::where('lvl_num', $user['lvl_id'])->first();
+        $r_sum = \App\Result::where('r_std', $user['id'])->sum('r_count');
+        $tcount = $level->lvl_numofLess * $tperl;
+        $blevel = ($tcount > 0) ? ($r_sum/$tcount)*100 : 0;
+        $level = round($blevel, 2);
+
+        return view('public.edit_profile', compact('gd', 'user', 'student', 'lvls', 'level', 'counties'));
+    }
+
+    public function society(){
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        $last_ques = \App\Discussion::select('id', 'd_author', 'd_author_type', 'd_ans_author', 'd_title')->where('d_state', 1)->orderBy('created_at', 'desc')->limit(5)->get();
+        $s_ques = \App\Discussion::where('d_state', 1)->paginate(10);
+        return view('public.society', compact('gd', 'user', 's_ques', 'last_ques'));
+    }
+
+    public function society_person($id){
+        if(!is_numeric($id)) abort(404);
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        $last_ques = \App\Discussion::select('id', 'd_author', 'd_author_type', 'd_ans_author', 'd_title')->where('d_state', 1)->orderBy('created_at', 'desc')->limit(5)->get();
+        $s_ques = \App\Discussion::where('d_state', 1)->where('d_author', 'like', $id)->orWhere('d_ans_author', 'like', $id)->paginate(10); if($s_ques->isEmpty()) abort(404);
+        return view('public.society', compact('gd', 'user', 's_ques', 'last_ques'));
+    }
+
+    public function society_single($id){
+        if(!is_numeric($id)) abort(404);
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        $last_ques = \App\Discussion::select('id', 'd_author', 'd_author_type', 'd_ans_author', 'd_title')->orderBy('created_at', 'desc')->limit(5)->get();
+        $ques = \App\Discussion::find($id); if($ques == null) abort(404);
+        return view('public.single_society', compact('gd', 'user', 'ques', 'last_ques'));
+    }
+
+    public function check_user_login(){
+        if(session()->has('s_user')){
+            return response()->json([
+                'error' => false,
+                'state' => true,
+                'code' => 200
+            ], 200);
+        }else{
+            return response()->json([
+                'error' => true,
+                'state' => false,
+                'code' => 403
+            ], 403);
+        }
+
+    }
+
+    public function multimedia(){
+        $user = $this->LoggedUser();
+        $gd = $this->GeneralData();
+        $medias = \App\Media::select('id', 'm_title', 'm_img')->paginate(12);
+        return view('public.multimedia', compact('gd', 'user', 'medias'));
+    }
+
+    public function single_media($m_id){
+        if(!is_numeric($m_id)) abort(404);
+        $user = $this->LoggedUser();
+        $gd = $this->GeneralData();
+        $media = \App\Media::find($m_id); if($media == null) abort(404);
+        return view('public.media', compact('gd', 'user', 'media'));
+    }
+        
+    public function lessons(){
+        $user = $this->LoggedUser();
+        $gd = $this->GeneralData();
+        $levels = \App\Level::all();
+        $subjects = \App\Subject::all();
+        $lessons = \App\Lesson::paginate(12);
+        return view('public.lessons', compact('gd', 'user', 'subjects', 'levels', 'lessons'));
+    }
+
+    public function filter_lessons($lvl, $sub, $term, $chap){
+        if((!is_numeric($lvl))||(!is_numeric($sub))||(!is_numeric($term))||(!is_numeric($chap))) abort(404);
+        $user = $this->LoggedUser();
+        $gd = $this->GeneralData();
+        $levels = \App\Level::all();
+        $subjects = \App\Subject::all();
+        if($chap != 0) {
+            $lessons = \App\Lesson::where('les_chapter', $chap)->paginate(12);
+        }elseif(($sub != 0)&&($chap == 0)) {
+            $chaps = \App\Chapter::where('ch_subject', $sub )->pluck('id')->toArray();
+            $lessons = \App\Lesson::whereIn('les_chapter', $chaps)->paginate(12);
+        }elseif(($term != 0)&&($sub == 0)&&($chap == 0)) {
+            $chaps = \App\Chapter::where('ch_term', $term )->pluck('id')->toArray();
+            $lessons = \App\Lesson::whereIn('les_chapter', $chaps)->paginate(12);
+        }elseif(($lvl != 0)&&($term == 0)&&($sub == 0)&&($chap == 0)) {
+            $chaps = \App\Chapter::where('ch_level', $lvl )->pluck('id')->toArray();
+            $lessons = \App\Lesson::whereIn('les_chapter', $chaps)->paginate(12);
+        }else{
+            $lessons = \App\Lesson::paginate(12);
+        }
+
+        return view('public.lessons', compact('gd', 'user', 'subjects', 'levels', 'lessons'));
+    }
+
+    public function single_file($f_id){
+        if(!is_numeric($f_id)) abort(404);
+      $file = \App\Learn_file::find($f_id); if($file == null) abort(404);
+        $user = $this->LoggedUser();
+        $gd = $this->GeneralData();
+        return view('public.single_file', compact('gd', 'user', 'file'));
+    }
+    
+    public function lessons(){
+        $user = $this->LoggedUser();
+        $gd = $this->GeneralData();
+        $levels = \App\Level::all();
+        $subjects = \App\Subject::all();
+        $lessons = \App\Lesson::paginate(12);
+        return view('public.lessons', compact('gd', 'user', 'subjects', 'levels', 'lessons'));
+    }
+
+    public function filter_lessons($lvl, $sub, $term, $chap){
+        if((!is_numeric($lvl))||(!is_numeric($sub))||(!is_numeric($term))||(!is_numeric($chap))) abort(404);
+        $user = $this->LoggedUser();
+        $gd = $this->GeneralData();
+        $levels = \App\Level::all();
+        $subjects = \App\Subject::all();
+        if($chap != 0) {
+            $lessons = \App\Lesson::where('les_chapter', $chap)->paginate(12);
+        }elseif(($sub != 0)&&($chap == 0)) {
+            $chaps = \App\Chapter::where('ch_subject', $sub )->pluck('id')->toArray();
+            $lessons = \App\Lesson::whereIn('les_chapter', $chaps)->paginate(12);
+        }elseif(($term != 0)&&($sub == 0)&&($chap == 0)) {
+            $chaps = \App\Chapter::where('ch_term', $term )->pluck('id')->toArray();
+            $lessons = \App\Lesson::whereIn('les_chapter', $chaps)->paginate(12);
+        }elseif(($lvl != 0)&&($term == 0)&&($sub == 0)&&($chap == 0)) {
+            $chaps = \App\Chapter::where('ch_level', $lvl )->pluck('id')->toArray();
+            $lessons = \App\Lesson::whereIn('les_chapter', $chaps)->paginate(12);
+        }else{
+            $lessons = \App\Lesson::paginate(12);
+        }
+
+        return view('public.lessons', compact('gd', 'user', 'subjects', 'levels', 'lessons'));
+    }
+
+    public function single_lesson($l_id){
+        if(!is_numeric($l_id)) abort(404);
+        $lesson = \App\Lesson::find($l_id);
+        if($lesson == null) abort(404);
+        $user = $this->LoggedUser();
+        $gd = $this->GeneralData();
+        return view('public.single_lesson', compact('gd', 'user', 'lesson'));
+    }
+
+    public function lesson_data($l_id){
+        if(!is_numeric($l_id)) abort(404);
+        $lesson = \App\Lesson::find($l_id);
+        if($lesson == null) abort(404);
+        return view('public.lesson_data', compact('lesson'));
+    }
+
+    public function materials(){
+        $gd = $this->GeneralData();
+        $levels = \App\Level::all();
+        $subs = \App\Subject::all();
+        $user = $this->LoggedUser();
+        return view('public.materials', compact('gd', 'levels', 'subs', 'user'));
+    }
+
+    public function material($lvl_id, $t_id, $sub_id){
+        if((!is_numeric($lvl_id))||(!is_numeric($sub_id))) abort(404);
+        $gd = $this->GeneralData();
+        $subject = \App\Subject::find($sub_id); if($subject == null) abort(404);
+        $chaps = $subject->Chapters->where('ch_level', $lvl_id)->where('ch_term', $t_id);
+        $user = $this->LoggedUser();
+        return view('public.material', compact('gd', 'user', 'chaps', 'subject'));
+    }
+
+    public function training($l_id){
+      if(!is_numeric($l_id)) abort(404);
+      $less_id = $l_id;
+      $text = 'انقر على الزر لتم توجيهك الى صفحة الاختبار الخاصة بهذا الدرس';
+      $gd = $this->GeneralData();
+      $user = $this->LoggedUser();
+      $result = '';
+      $tperl = \App\Setting::where('set_id', 'train_per_lesson')->first()->set_data;
+      $is_finish = [];
+      $lesson = \App\Lesson::find($l_id);
+      $chap = $lesson->Chapter;
+      if($user && ($user['lvl_id'] == $chap->ch_level)){
+        $result = \App\Result::where('r_less', $l_id)->where('r_std', $user['id'])->first();
+        $is_finish['type'] = 'std';
+      }else{
+        $result = '';
+        if((session()->has('std_result'))&&(session('std_result')['r_less'] == $l_id )){
+          $result = session('std_result');
+          $is_finish['type'] = 'visitor';
+          
+        }else{
+           $result = array('r_less'=>$l_id, 'r_qids'=>"", 'r_time'=> '00:00:00', 'r_count'=>0, 'r_tcount'=>0);
+           session(['std_result' => $result]);
+        }
+      }
+      $ids = explode(",", $result['r_qids']);
+      $ques = \App\Training::where('t_lesson', $l_id)->whereNotIn('id', $ids)->inRandomOrder()->first();
+      if(($result && ($result['r_count'] >= $tperl))||($ques == null)) {
+        $is_finish['state'] = true;
+        $is_finish['msg'] = 'لقد انهيت حل اسألة هذا الدرس مسبقاً';
+      }else{
+        $is_finish['state'] = false;
+        $is_finish['msg'] = '';
+      }
+      return view('public.ques_step', compact('gd', 'user', 'less_id', 'text', 'is_finish'));
+    }
+  
+  public function retry($l_id){
+        
+    if(!is_numeric($l_id)) abort(404);
+    $user = $this->LoggedUser();
+    $lesson = \App\Lesson::find($l_id);
+      $chap = $lesson->Chapter;
+    if($user && ($user['lvl_id'] == $chap->ch_level)){
+        $result = \App\Result::where('r_less', $l_id)->where('r_std', $user['id'])->first();
+        $degree = \App\Degree::where('d_std', $user['id'])->where('d_less', $l_id)->first();
+        $degree->delete();
+        $result->r_qids = '';
+        $result->r_count = 0;
+        $result->r_tcount = 0;
+        $result->r_time = '00:00:00';
+        $result->save();
+      }else{
+        $result = '';
+        if((session()->has('std_result'))&&(session('std_result')['r_less'] == $l_id )){
+          $result = session('std_result');
+          $result = array('r_less'=>$l_id, 'r_qids'=>"", 'r_time'=> '00:00:00', 'r_count'=>0, 'r_tcount'=>0);
+          session(['std_result' => $result]);
+        }
+      }
+    return redirect('/training/'.$l_id);
+  }
+  
+  
+  public function get_degree($l_id){
+    if(!is_numeric($l_id)) abort(404);
+    $user = $this->LoggedUser(); 
+    $less = \App\Lesson::find($l_id); if($less == null) abort(404); 
+    $chap = $less->Chapter;
+    $tperl = \App\Setting::where('set_id', 'train_per_lesson')->first()->set_data;
+    if($user){
+      if($user['lvl_id'] == $chap->ch_level){
+        $result = \App\Result::where('r_less', $l_id)->where('r_std', $user['id'])->first();
+        if($result){ $ids = explode(",", $result->r_qids); }else{ $ids = ''; }
+        
+        $ques = \App\Training::where('t_lesson', $l_id)->whereNotIn('id', $ids)->inRandomOrder()->first();
+        if(($result && ($result->r_count >= $tperl))||($ques == null)) {
+          $degree = \App\Degree::where('d_std', $user['id'])->where('d_less', $l_id)->first();
+          if($degree == null){
+            $degree = new \App\Degree;
+          }
+          $blevel = ($result->r_count > 0) ? ($result->r_tcount/$result->r_count)*100 : 0;
+          $new_gpa = round($blevel, 2); 
+          $degree->d_std = $user['id'];
+          $degree->d_less = $l_id;
+          $degree->d_gpa = $new_gpa;
+          $degree->save();
+          return redirect('/degree/'.$degree->id);
+        }else{
+          abort(404);
+        }
+      }else{
+        $message = 'لا يمكنك مشاركة نتيجة هذا الدرس, لانه ينتمي الى صف دراسي غير صفك ';
+        session()->flash('note', $message);
+        return redirect('/materials');
+      }
+    }else{
+      $message = 'عليك التسجيل كطالب في الموقع لكي تتمكن من مشاركة النتيجة الخاصة بك.';
+      session()->flash('note', $message);
+      return redirect('/login');
+    }
+  }
+  
+  public function result($l_id){
+    if(!is_numeric($l_id)) abort(404);
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        $less = \App\Lesson::find($l_id); if($less == null) abort(404);
+        $chap = $less->Chapter;
+    $tperl = \App\Setting::where('set_id', 'train_per_lesson')->first()->set_data;
+    if($user && ($user['lvl_id'] == $chap->ch_level)){
+            $result = \App\Result::where('r_less', $l_id)->where('r_std', $user['id'])->first();
+            if($result == null) abort(404);
+
+            $ids = explode(",", $result->r_qids);
+            $ques = \App\Training::where('t_lesson', $l_id)->whereNotIn('id', $ids)->inRandomOrder()->first();
+            if($ques == null) {
+                if(($result == null)||($result['r_count'] == 0)){
+                    abort(404);
+                }else{
+                    return view('public.result', compact('gd', 'user', 'result'));
+                }
+            }else{
+              return redirect('/training/'+$l_id);
+            }
+        }else{
+            $result = '';
+            if((session()->has('std_result'))&&(session('std_result')['r_less'] == $l_id )){
+                $result = session('std_result');
+            }else{
+                abort(404);
+            }
+            if($result['r_count'] >= $tperl) {
+                return view('public.result', compact('gd', 'user', 'result'));
+            }
+
+            $ids = explode(",", $result['r_qids']);
+            $ques = \App\Training::where('t_lesson', $l_id)->whereNotIn('id', $ids)->inRandomOrder()->first();
+            if($ques == null) {
+                if(($result == null)||($result['r_count'] == 0)){
+                    abort(404);
+                }else{
+                    return view('public.result', compact('gd', 'user', 'result'));
+                }
+            }else{
+              return redirect('/training/'+$l_id);
+            }
+        }
+  }
+    public function question($l_id){
+        if(!is_numeric($l_id)) abort(404);
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        $less = \App\Lesson::find($l_id); if($less == null) abort(404);
+        $chap = $less->Chapter;
+
+        $tperl = \App\Setting::where('set_id', 'train_per_lesson')->first()->set_data;
+
+        if($user && ($user['lvl_id'] == $chap->ch_level)){
+            $result = \App\Result::where('r_less', $l_id)->where('r_std', $user['id'])->first();
+            if($result == null){
+                $result = new \App\Result;
+                $result->r_less = $l_id;
+                $result->r_std = $user['id'];
+                $result->r_qids = "";
+                $result->r_count = 0;
+                $result->r_tcount = 0;
+                $result->save();
+            }
+
+            if($result->r_count >= $tperl) {
+                $message = 'لقد انتهيت من تدريبات هذا الدرس, اختار درس اخر لحل تدريباته.';
+                session()->flash('note', $message);
+                return redirect('/materials');
+            }
+
+            $ids = explode(",", $result->r_qids);
+            $ques = \App\Training::where('t_lesson', $l_id)->whereNotIn('id', $ids)->inRandomOrder()->first();
+            if($ques == null) {
+                if(($result == null)||($result['r_count'] == 0)){
+                    abort(404);
+                }else{
+                    return view('public.result', compact('gd', 'user', 'result'));
+                }
+            }
+            return view('public.question', compact('gd', 'user', 'ques', 'result'));
+        }else{
+            $result = '';
+            if((session()->has('std_result'))&&(session('std_result')['r_less'] == $l_id )){
+                $result = session('std_result');
+            }else{
+                $result = array('r_less'=>$l_id, 'r_qids'=>"", 'r_time'=> '00:00:00', 'r_count'=>0, 'r_tcount'=>0);
+                session(['std_result' => $result]);
+            }
+            if($result['r_count'] >= $tperl) {
+                $message = 'لقد انتهيت من تدريبات هذا الدرس, اختار درس اخر لحل تدريباته.';
+                session()->flash('note', $message);
+                return redirect('/materials');
+            }
+
+            $ids = explode(",", $result['r_qids']);
+            $ques = \App\Training::where('t_lesson', $l_id)->whereNotIn('id', $ids)->inRandomOrder()->first();
+            if($ques == null) {
+                if(($result == null)||($result['r_count'] == 0)){
+                    abort(404);
+                }else{
+                    return view('public.result', compact('gd', 'user', 'result'));
+                }
+            }
+            return view('public.question', compact('gd', 'user', 'ques', 'result'));
+        }
+
+    }
+    public function degree($d_id){
+      if(!is_numeric($d_id)) abort(404);
+        $degree = \App\Degree::find($d_id);  if($degree == null) abort(404);
+        $gd = $this->GeneralData();
+        $user = $this->LoggedUser();
+        return view('public.degree', compact('gd', 'user', 'degree'));
+    }
+}
